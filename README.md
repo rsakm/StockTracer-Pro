@@ -46,7 +46,10 @@ This app uses the free plan of the Finnhub API which limits API requests to 60 c
 
 # ✨ Upcoming Features
    Add stock to favorites
+   
    Search & filter by company name
+   
    Historical price view
+   
    User authentication
 
