@@ -57,65 +57,47 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchInitialData = async () => {
       setLoading(true);
-      const symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NFLX', 'NVDA'];
-
+      
       try {
-        const stockPromises = symbols.map(async (symbol) => {
-          try {
-            const data = await getQuote(symbol);
-            return {
-              symbol,
-              name: symbol,
-              price: data.c,
-              change: data.d,
-              percentChange: data.dp.toFixed(2),
-              volume: formatVolume(data.v),
-              prevClose: data.pc,
-              open: data.o,
-              high: data.h,
-              low: data.l
-            };
-          } catch (error) {
-            console.error(`Failed to fetch ${symbol}:`, error);
-            // Return mock data for this symbol if API fails
-            return mockStockData.find(s => s.symbol === symbol) || {
-              symbol,
-              name: symbol,
-              price: 0,
-              change: 0,
-              percentChange: '0.00',
-              volume: 'N/A',
-              prevClose: 0,
-              open: 0,
-              high: 0,
-              low: 0
-            };
-          }
-        });
-
-        const [stocksData, indices] = await Promise.all([
-          Promise.all(stockPromises),
-          getIndicesData().catch(error => {
-            console.error('Failed to fetch indices:', error);
-            return mockIndicesData;
-          })
-        ]);
-
-        setStocks(stocksData);
+        const symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NFLX', 'NVDA'];
+        
+        // Fetch all quotes in parallel
+        const quotes = await Promise.all(
+          symbols.map(symbol => 
+            getQuote(symbol)
+              .then(data => ({
+                symbol,
+                name: symbol,
+                price: data.c,
+                change: data.d,
+                percentChange: data.dp.toFixed(2),
+                volume: formatVolume(data.v),
+                prevClose: data.pc,
+                open: data.o,
+                high: data.h,
+                low: data.l
+              }))
+              .catch(error => {
+                console.error(`Failed to fetch ${symbol}:`, error);
+                return mockStockData.find(s => s.symbol === symbol);
+              })
+          )
+        );
+  
+        const indices = await getIndicesData().catch(() => mockIndicesData);
+        
+        setStocks(quotes.filter(Boolean));
         setIndicesData(indices);
-        setActiveStock(stocksData[0]);
-        setWatchlist([stocksData[0], stocksData[2], stocksData[5]]);
+        setActiveStock(quotes[0]);
       } catch (error) {
-        console.error('Initial data fetch failed:', error);
+        console.error('Initialization error:', error);
         setStocks(mockStockData);
-        setIndicesData(mockIndicesData);
         setActiveStock(mockStockData[0]);
-        setWatchlist([mockStockData[0], mockStockData[2], mockStockData[5]]);
       } finally {
         setLoading(false);
       }
     };
-
+  
     fetchInitialData();
   }, []);
 
@@ -129,6 +111,7 @@ export default function Dashboard() {
         
         const data = await getCandleData(activeStock.symbol, '5', from, now);
         
+        // Check if we got valid data back (either real or mock)
         if (data.s === 'ok' && data.t && data.c) {
           const formatted = data.t.map((timestamp, i) => ({
             time: new Date(timestamp * 1000).toLocaleTimeString([], { 
@@ -139,11 +122,16 @@ export default function Dashboard() {
           }));
           setChartData(formatted);
         } else {
-          throw new Error(data.s === 'no_data' ? 'No data available' : 'Invalid data format');
+          console.warn('Invalid chart data format, using mock data');
+          const mockChartPoints = Array.from({ length: 20 }, (_, i) => ({
+            time: `${9 + Math.floor(i/2)}:${i % 2 === 0 ? '00' : '30'}`,
+            price: activeStock.price + (Math.random() * 10 - 5)
+          }));
+          setChartData(mockChartPoints);
         }
       } catch (error) {
         console.error('Failed to fetch chart data:', error);
-        // Create mock chart data when API fails
+        // Fallback to mock data on any error
         const mockChartPoints = Array.from({ length: 20 }, (_, i) => ({
           time: `${9 + Math.floor(i/2)}:${i % 2 === 0 ? '00' : '30'}`,
           price: activeStock.price + (Math.random() * 10 - 5)
@@ -151,7 +139,7 @@ export default function Dashboard() {
         setChartData(mockChartPoints);
       }
     };
-
+  
     fetchChart();
   }, [activeStock]);
 
