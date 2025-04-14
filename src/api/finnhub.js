@@ -1,87 +1,93 @@
-
 import { throttledGet } from './throttledAxios';
 
-const API_KEY = 'cvueocpr01qjg139bmt0cvueocpr01qjg139bmtg';
+const API_KEY = 'cvt3nq9r01qhup0u34q0cvt3nq9r01qhup0u34qg';
 const BASE_URL = 'https://finnhub.io/api/v1';
 
 export const getQuote = async (symbol) => {
-  const { data } = await throttledGet(`${BASE_URL}/quote`, {
-    symbol,
-    token: API_KEY,
-  });
-  return data;
+  try {
+    const { data } = await throttledGet(`${BASE_URL}/quote`, {
+      params: {
+        symbol,
+        token: API_KEY,
+      }
+    });
+    return data;
+  } catch (error) {
+    console.error('Error fetching quote:', error);
+    throw error;
+  }
 };
 
 export const getSearchResults = async (query) => {
-  const { data } = await throttledGet(`${BASE_URL}/search`, {
-    q: query,
-    token: API_KEY,
-  });
-  return data.result;
+  try {
+    const { data } = await throttledGet(`${BASE_URL}/search`, {
+      params: {
+        q: query,
+        token: API_KEY,
+      }
+    });
+    return data.result || [];
+  } catch (error) {
+    console.error('Error fetching search results:', error);
+    return [];
+  }
 };
 
-export const getCandleData = async (symbol, resolution = '1') => {
+export const getCandleData = async (symbol, resolution = '5', from, to) => {
   try {
-    const currentTime = Math.floor(Date.now() / 1000);
-    const oneDayAgo = currentTime - 24 * 60 * 60;
-
     const { data } = await throttledGet(`${BASE_URL}/stock/candle`, {
-      symbol,
-      resolution,
-      from: oneDayAgo,
-      to: currentTime,
-      token: API_KEY,
+      params: {
+        symbol,
+        resolution,
+        from,
+        to,
+        token: API_KEY,
+      }
     });
 
-    if (data.s === 'ok') {
-      return data.t.map((timestamp, i) => ({
-        time: new Date(timestamp * 1000).toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        price: data.c[i],
-      }));
-    } else {
-      console.warn('Candle data fetch failed:', data);
-      return [];
+    if (data.s !== 'ok') {
+      console.warn('Candle data not ok:', data);
+      return { s: 'no_data' };
     }
-  } catch (err) {
-    console.error('Error fetching candle data:', err);
-    return [];
+
+    return data;
+  } catch (error) {
+    console.error('Error fetching candle data:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+    return { s: 'error' };
   }
 };
 
 export const getIndicesData = async () => {
   const symbols = ['^GSPC', '^IXIC', '^DJI'];
   try {
-    const responses = [];
-
-    for (const symbol of symbols) {
-      const data = await getQuote(symbol);
-      responses.push(data);
-    }
+    const responses = await Promise.all(
+      symbols.map(symbol => getQuote(symbol))
+    );
 
     return responses.map((response, index) => {
-      const indexName = index === 0 ? 'S&P 500' : index === 1 ? 'NASDAQ' : 'DOW';
-      const value = response?.c ?? null;
-      const change = response?.dp ?? null;
-
-      if (value === null || change === null) {
+      const indexName = ['S&P 500', 'NASDAQ', 'DOW'][index];
+      
+      if (!response?.c || !response?.dp) {
         return { name: indexName, value: 'N/A', change: 'N/A' };
       }
 
       return {
         name: indexName,
-        value: value.toFixed(2),
-        change: `${change.toFixed(2)}%`,
+        value: response.c.toFixed(2),
+        change: `${response.dp.toFixed(2)}%`,
+        isUp: response.dp >= 0
       };
     });
   } catch (error) {
-    console.error('Error fetching indices data:', error);
+    console.error('Error fetching indices:', error);
     return [
       { name: 'S&P 500', value: 'Error', change: 'Error' },
       { name: 'NASDAQ', value: 'Error', change: 'Error' },
-      { name: 'DOW', value: 'Error', change: 'Error' },
+      { name: 'DOW', value: 'Error', change: 'Error' }
     ];
   }
 };

@@ -61,30 +61,52 @@ export default function Dashboard() {
 
       try {
         const stockPromises = symbols.map(async (symbol) => {
-          const data = await getQuote(symbol);
-          return {
-            symbol,
-            name: symbol,
-            price: data.c,
-            change: data.c - data.pc,
-            percentChange: ((data.c - data.pc) / data.pc * 100).toFixed(2),
-            volume: formatVolume(data.v),
-            prevClose: data.pc,
-            open: data.o,
-            high: data.h,
-            low: data.l
-          };
+          try {
+            const data = await getQuote(symbol);
+            return {
+              symbol,
+              name: symbol,
+              price: data.c,
+              change: data.d,
+              percentChange: data.dp.toFixed(2),
+              volume: formatVolume(data.v),
+              prevClose: data.pc,
+              open: data.o,
+              high: data.h,
+              low: data.l
+            };
+          } catch (error) {
+            console.error(`Failed to fetch ${symbol}:`, error);
+            // Return mock data for this symbol if API fails
+            return mockStockData.find(s => s.symbol === symbol) || {
+              symbol,
+              name: symbol,
+              price: 0,
+              change: 0,
+              percentChange: '0.00',
+              volume: 'N/A',
+              prevClose: 0,
+              open: 0,
+              high: 0,
+              low: 0
+            };
+          }
         });
 
-        const stocksData = await Promise.all(stockPromises);
-        const indices = await getIndicesData();
+        const [stocksData, indices] = await Promise.all([
+          Promise.all(stockPromises),
+          getIndicesData().catch(error => {
+            console.error('Failed to fetch indices:', error);
+            return mockIndicesData;
+          })
+        ]);
 
         setStocks(stocksData);
         setIndicesData(indices);
         setActiveStock(stocksData[0]);
         setWatchlist([stocksData[0], stocksData[2], stocksData[5]]);
       } catch (error) {
-        console.error('Fetch failed, using mock data.', error);
+        console.error('Initial data fetch failed:', error);
         setStocks(mockStockData);
         setIndicesData(mockIndicesData);
         setActiveStock(mockStockData[0]);
@@ -100,20 +122,33 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchChart = async () => {
       if (!activeStock) return;
-      const now = Math.floor(Date.now() / 1000);
-      const from = now - (6.5 * 60 * 60);
-
+      
       try {
+        const now = Math.floor(Date.now() / 1000);
+        const from = now - (6.5 * 60 * 60); // 6.5 hours of trading data
+        
         const data = await getCandleData(activeStock.symbol, '5', from, now);
-        if (data.s !== 'ok') throw new Error('Chart data fetch failed');
-        const formatted = data.t.map((timestamp, i) => ({
-          time: new Date(timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          price: data.c[i]
-        }));
-        setChartData(formatted);
+        
+        if (data.s === 'ok' && data.t && data.c) {
+          const formatted = data.t.map((timestamp, i) => ({
+            time: new Date(timestamp * 1000).toLocaleTimeString([], { 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            }),
+            price: data.c[i]
+          }));
+          setChartData(formatted);
+        } else {
+          throw new Error(data.s === 'no_data' ? 'No data available' : 'Invalid data format');
+        }
       } catch (error) {
-        console.error('Chart fetch failed, using empty data.', error);
-        setChartData([]);
+        console.error('Failed to fetch chart data:', error);
+        // Create mock chart data when API fails
+        const mockChartPoints = Array.from({ length: 20 }, (_, i) => ({
+          time: `${9 + Math.floor(i/2)}:${i % 2 === 0 ? '00' : '30'}`,
+          price: activeStock.price + (Math.random() * 10 - 5)
+        }));
+        setChartData(mockChartPoints);
       }
     };
 
@@ -122,12 +157,12 @@ export default function Dashboard() {
 
   useEffect(() => {
     const timer = setTimeout(async () => {
-      if (searchQuery) {
+      if (searchQuery.trim()) {
         try {
           const results = await getSearchResults(searchQuery);
           setSearchResults(results.filter(r => r.type === 'Common Stock'));
         } catch (error) {
-          console.error('Search fetch failed.', error);
+          console.error('Search failed:', error);
           setSearchResults([]);
         }
       } else {
@@ -141,11 +176,16 @@ export default function Dashboard() {
   const handleSearchResultClick = (result) => {
     setSearchQuery('');
     setSearchResults([]);
-    const selected = stocks.find(s => s.symbol === result.symbol) || mockStockData.find(s => s.symbol === result.symbol);
+    const selected = stocks.find(s => s.symbol === result.symbol) || 
+                    mockStockData.find(s => s.symbol === result.symbol);
+    
     if (selected) {
       setActiveStock(selected);
       if (!stocks.some(s => s.symbol === selected.symbol)) {
         setStocks([...stocks, selected]);
+      }
+      if (!watchlist.some(item => item.symbol === selected.symbol)) {
+        setWatchlist([...watchlist, selected]);
       }
     }
   };
@@ -156,8 +196,45 @@ export default function Dashboard() {
     }
   };
 
-  const refreshData = () => {
-    window.location.reload();
+  const refreshData = async () => {
+    setLoading(true);
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const from = now - (6.5 * 60 * 60);
+      
+      // Refresh active stock data
+      if (activeStock) {
+        const stockData = await getQuote(activeStock.symbol);
+        const chartData = await getCandleData(activeStock.symbol, '5', from, now);
+        
+        setActiveStock(prev => ({
+          ...prev,
+          price: stockData.c,
+          change: stockData.d,
+          percentChange: stockData.dp.toFixed(2),
+          volume: formatVolume(stockData.v),
+          prevClose: stockData.pc,
+          open: stockData.o,
+          high: stockData.h,
+          low: stockData.l
+        }));
+
+        if (chartData.s === 'ok' && chartData.t && chartData.c) {
+          const formatted = chartData.t.map((timestamp, i) => ({
+            time: new Date(timestamp * 1000).toLocaleTimeString([], { 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            }),
+            price: chartData.c[i]
+          }));
+          setChartData(formatted);
+        }
+      }
+    } catch (error) {
+      console.error('Refresh failed:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading && (!stocks.length || !activeStock)) {
@@ -185,7 +262,6 @@ export default function Dashboard() {
       />
 
       <main className="container mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Sidebar */}
         <div className="lg:col-span-1">
           <Watchlist
             darkMode={darkMode}
@@ -199,7 +275,6 @@ export default function Dashboard() {
           <Indices darkMode={darkMode} indicesData={indicesData} />
         </div>
 
-        {/* Main Content */}
         <div className="lg:col-span-2">
           <StockDetails
             darkMode={darkMode}
